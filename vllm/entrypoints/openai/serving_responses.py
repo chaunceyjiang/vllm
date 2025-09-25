@@ -1135,28 +1135,6 @@ class OpenAIServingResponses(OpenAIServing):
                                     logprobs=[],
                                 ),
                             ))
-                        for pm in previous_delta_messages:
-                            if pm.content:
-                                current_content_index += 1
-                                yield _send_event(
-                                    openai_responses_types.
-                                    ResponseTextDeltaEvent(
-                                        type="response.output_text.delta",
-                                        sequence_number=-1,
-                                        content_index=current_content_index,
-                                        output_index=current_output_index,
-                                        item_id=current_item_id,
-                                        delta=pm.content,
-                                        logprobs=self.
-                                        _create_stream_response_logprobs(
-                                            token_ids=output.token_ids,
-                                            logprobs=output.logprobs,
-                                            tokenizer=tokenizer,
-                                            top_logprobs=request.top_logprobs,
-                                        ) if
-                                        request.is_include_output_logprobs()
-                                        else [],
-                                    ))
                     current_content_index += 1
                     first_delta_sent = True
 

@@ -314,7 +314,7 @@ class Qwen3CoderToolParser(ToolParser):
         previous_token_ids: Sequence[int],
         current_token_ids: Sequence[int],
         delta_token_ids: Sequence[int],
-        request: ChatCompletionRequest,
+        request: Union[ChatCompletionRequest, ResponsesRequest],
     ) -> Union[DeltaMessage, None]:
         # Store request for type conversion
         if not previous_text:

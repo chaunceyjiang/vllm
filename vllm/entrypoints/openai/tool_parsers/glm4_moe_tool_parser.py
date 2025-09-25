@@ -136,7 +136,7 @@ class Glm4MoeModelToolParser(ToolParser):
         previous_token_ids: Sequence[int],
         current_token_ids: Sequence[int],
         delta_token_ids: Sequence[int],
-        request: ChatCompletionRequest,
+        request: Union[ChatCompletionRequest, ResponsesRequest],
     ) -> Union[DeltaMessage, None]:
         self._buffer += delta_text
         cur_text = self._buffer

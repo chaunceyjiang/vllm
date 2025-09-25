@@ -163,7 +163,7 @@ class Hermes2ProToolParser(ToolParser):
         previous_token_ids: Sequence[int],
         current_token_ids: Sequence[int],
         delta_token_ids: Sequence[int],
-        request: ChatCompletionRequest,
+        request: Union[ChatCompletionRequest, ResponsesRequest],
     ) -> Union[DeltaMessage, None]:
         # 1. All tokens are parsed based on _text, not token_ids.
         # 2. All incoming text data is processed by the tool_call_delta_buffer
