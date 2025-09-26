@@ -1048,7 +1048,8 @@ class OpenAIServingResponses(OpenAIServing):
                         delta_token_ids=output.token_ids,
                         request=request,
                     )
-                if reasoning_parser:
+                if (reasoning_parser and delta_message
+                        and not delta_message.tool_calls):
                     delta_message = \
                         reasoning_parser.extract_reasoning_content_streaming(
                         previous_text=previous_text,
@@ -1066,8 +1067,6 @@ class OpenAIServingResponses(OpenAIServing):
                 if not first_delta_sent:
                     current_item_id = str(uuid.uuid4())
                     if delta_message.tool_calls:
-                        # remove previous delta messages
-                        previous_delta_messages = []
                         current_tool_call_id = f"call_{random_uuid()}"
                         current_tool_call_name = delta_message.tool_calls[
                             0].function.name
@@ -1119,6 +1118,7 @@ class OpenAIServingResponses(OpenAIServing):
                                     status="in_progress",
                                 ),
                             ))
+                    # skip content_part for tool calls
                     if not delta_message.tool_calls:
                         yield _send_event(
                             openai_responses_types.
@@ -1194,6 +1194,38 @@ class OpenAIServingResponses(OpenAIServing):
                                     status="in_progress",
                                 ),
                             ))
+                    elif delta_message.content:
+                        # back to normal message output
+                        yield _send_event(
+                            openai_responses_types.
+                            ResponseOutputItemAddedEvent(
+                                type="response.output_item.added",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                item=openai_responses_types.
+                                ResponseOutputMessage(
+                                    id=current_item_id,
+                                    type="message",
+                                    role="assistant",
+                                    content=[],
+                                    status="in_progress",
+                                ),
+                            ))
+                        yield _send_event(
+                            openai_responses_types.
+                            ResponseContentPartAddedEvent(
+                                type="response.content_part.added",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                item_id=current_item_id,
+                                content_index=current_content_index,
+                                part=openai_responses_types.ResponseOutputText(
+                                    type="output_text",
+                                    text="",
+                                    annotations=[],
+                                    logprobs=[],
+                                ),
+                            ))
                     current_content_index += 1
                     previous_delta_messages = []
 
@@ -1216,6 +1248,20 @@ class OpenAIServingResponses(OpenAIServing):
                             content_index=current_content_index,
                             text=reason_content,
                         ))
+                    yield _send_event(
+                        openai_responses_types.ResponseContentPartDoneEvent(
+                            type="response.content_part.done",
+                            sequence_number=-1,
+                            item_id=current_item_id,
+                            output_index=current_output_index,
+                            content_index=current_content_index,
+                            part=openai_responses_types.ResponseOutputText(
+                                type="output_text",
+                                text=reason_content,
+                                annotations=[],
+                                logprobs=[],
+                            ),
+                        ))
                     current_content_index = 0
                     reasoning_item = ResponseReasoningItem(
                         type="reasoning",
@@ -1236,6 +1282,8 @@ class OpenAIServingResponses(OpenAIServing):
                             output_index=current_output_index,
                             item=reasoning_item,
                         ))
+                    current_output_index += 1
+                    current_item_id = str(uuid.uuid4())
                     yield _send_event(
                         openai_responses_types.ResponseOutputItemAddedEvent(
                             type="response.output_item.added",
@@ -1249,8 +1297,6 @@ class OpenAIServingResponses(OpenAIServing):
                                 status="in_progress",
                             ),
                         ))
-                    current_output_index += 1
-                    current_item_id = str(uuid.uuid4())
                     yield _send_event(
                         openai_responses_types.ResponseContentPartAddedEvent(
                             type="response.content_part.added",
@@ -1270,15 +1316,83 @@ class OpenAIServingResponses(OpenAIServing):
                     previous_delta_messages = []
 
                 if delta_message.tool_calls:
-                    yield _send_event(
-                        ResponseFunctionCallArgumentsDeltaEvent(
-                            type="response.function_call_arguments.delta",
-                            sequence_number=-1,
-                            output_index=current_output_index,
-                            item_id=current_item_id,
-                            delta=delta_message.tool_calls[0].function.
-                            arguments,
-                        ))
+                    if delta_message.tool_calls[0].function.arguments:
+                        yield _send_event(
+                            ResponseFunctionCallArgumentsDeltaEvent(
+                                type="response.function_call_arguments.delta",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                item_id=current_item_id,
+                                delta=delta_message.tool_calls[0].function.
+                                arguments,
+                            ))
+                    # tool call initiated with no arguments
+                    # send done with current content part
+                    # and add new function call item
+                    elif delta_message.tool_calls[0].function.name:
+                        yield _send_event(
+                            openai_responses_types.ResponseTextDoneEvent(
+                                type="response.output_text.done",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                content_index=current_content_index,
+                                text="",
+                                logprobs=[],
+                                item_id=current_item_id,
+                            ))
+                        yield _send_event(
+                            openai_responses_types.
+                            ResponseContentPartDoneEvent(
+                                type="response.content_part.done",
+                                sequence_number=-1,
+                                item_id=current_item_id,
+                                output_index=current_output_index,
+                                content_index=current_content_index,
+                                part=openai_responses_types.ResponseOutputText(
+                                    type="output_text",
+                                    text="",
+                                    annotations=[],
+                                    logprobs=[],
+                                ),
+                            ))
+                        yield _send_event(
+                            ResponseOutputItemDoneEvent(
+                                type="response.output_item.done",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                item=openai_responses_types.
+                                ResponseOutputMessage(
+                                    id=current_item_id,
+                                    type="message",
+                                    role="assistant",
+                                    content=[],
+                                    status="completed",
+                                ),
+                            ))
+                        current_output_index += 1
+                        current_item_id = str(uuid.uuid4())
+                        current_tool_call_id = f"call_{random_uuid()}"
+                        current_tool_call_name = delta_message.tool_calls[
+                            0].function.name
+                        yield _send_event(
+                            openai_responses_types.
+                            ResponseOutputItemAddedEvent(
+                                type="response.output_item.added",
+                                sequence_number=-1,
+                                output_index=current_output_index,
+                                item=openai_responses_types.
+                                ResponseFunctionToolCallItem(
+                                    type="function_call",
+                                    id=current_item_id,
+                                    call_id=current_tool_call_id,
+                                    name=current_tool_call_name,
+                                    arguments="",
+                                    status="in_progress",
+                                ),
+                            ))
+                        # skip content part for tool call
+                        current_content_index = 1
+                        continue
                 elif delta_message.reasoning_content is not None:
                     yield _send_event(
                         ResponseReasoningTextDeltaEvent(
@@ -1353,6 +1467,20 @@ class OpenAIServingResponses(OpenAIServing):
                         output_index=current_output_index,
                         content_index=current_content_index,
                         text=reason_content,
+                    ))
+                yield _send_event(
+                    openai_responses_types.ResponseContentPartDoneEvent(
+                        type="response.content_part.done",
+                        sequence_number=-1,
+                        item_id=current_item_id,
+                        output_index=current_output_index,
+                        content_index=current_content_index,
+                        part=openai_responses_types.ResponseOutputText(
+                            type="output_text",
+                            text=reason_content,
+                            annotations=[],
+                            logprobs=[],
+                        ),
                     ))
                 current_content_index += 1
                 reasoning_item = ResponseReasoningItem(
