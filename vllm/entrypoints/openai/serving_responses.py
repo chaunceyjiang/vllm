@@ -1138,6 +1138,8 @@ class OpenAIServingResponses(OpenAIServing):
                     current_content_index += 1
                     first_delta_sent = True
 
+                # tool call is done when current delta message has
+                # content or name is defined on tool_calls
                 if previous_delta_messages and previous_delta_messages[
                         -1].tool_calls and (
                             delta_message.content is not None or
@@ -1170,12 +1172,13 @@ class OpenAIServingResponses(OpenAIServing):
                             output_index=current_output_index,
                             item=function_call_item,
                         ))
-                    current_tool_call_name = ""
-                    current_tool_call_id = f"call_{random_uuid()}"
                     current_item_id = str(uuid.uuid4())
                     current_output_index += 1
                     if delta_message.tool_calls:
                         # new tool call output started
+                        current_tool_call_name = delta_message.tool_calls[
+                            0].function.name
+                        current_tool_call_id = f"call_{random_uuid()}"
                         yield _send_event(
                             openai_responses_types.
                             ResponseOutputItemAddedEvent(
@@ -1187,8 +1190,7 @@ class OpenAIServingResponses(OpenAIServing):
                                     type="function_call",
                                     id=current_item_id,
                                     call_id=current_tool_call_id,
-                                    name=delta_message.tool_calls[0].function.
-                                    name,
+                                    name=current_tool_call_name,
                                     arguments=delta_message.tool_calls[0].
                                     function.arguments,
                                     status="in_progress",
@@ -1327,9 +1329,9 @@ class OpenAIServingResponses(OpenAIServing):
                                 arguments,
                             ))
                     # tool call initiated with no arguments
-                    # send done with current content part
-                    # and add new function call item
                     elif delta_message.tool_calls[0].function.name:
+                        # send done with current content part
+                        # and add new function call item
                         yield _send_event(
                             openai_responses_types.ResponseTextDoneEvent(
                                 type="response.output_text.done",
@@ -1371,9 +1373,9 @@ class OpenAIServingResponses(OpenAIServing):
                             ))
                         current_output_index += 1
                         current_item_id = str(uuid.uuid4())
-                        current_tool_call_id = f"call_{random_uuid()}"
                         current_tool_call_name = delta_message.tool_calls[
                             0].function.name
+                        current_tool_call_id = f"call_{random_uuid()}"
                         yield _send_event(
                             openai_responses_types.
                             ResponseOutputItemAddedEvent(
