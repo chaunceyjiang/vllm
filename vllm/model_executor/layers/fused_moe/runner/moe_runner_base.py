@@ -64,6 +64,13 @@ if TYPE_CHECKING:
 else:
     _layer_name_type = ModuleName if HAS_OPAQUE_TYPE else str
 
+try:
+    assume_constant_result = torch.compiler.assume_constant_result
+except Exception:
+
+    def assume_constant_result(f):
+        return f
+
 
 @torch.compiler.assume_constant_result
 def _resolve_layer_name(layer_name: str | ModuleName) -> str:
