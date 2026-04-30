@@ -24,7 +24,7 @@ First, install Codex by following the [official installation guide](https://gith
 
 ## Starting the vLLM Server
 
-Start vLLM with a tool-calling capable model - here's an example using `Qwen/Qwen3-27B`:
+Start vLLM with a tool-calling capable model - here's an example using `Qwen/Qwen3.6-27B`:
 
 ```bash
 vllm serve Qwen/Qwen3.6-27B --port 8000 --tensor-parallel-size 8 --max-model-len 262144 --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder
