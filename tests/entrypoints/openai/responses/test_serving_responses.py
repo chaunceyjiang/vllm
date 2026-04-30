@@ -1124,3 +1124,132 @@ class TestAutoToolStreaming:
             if event.type == "response.function_call_arguments.delta"
         ]
         assert "".join(argument_deltas) == '{"location":"Berlin"}'
+
+
+class TestRequiredToolCallStreaming:
+    """Tests for DelegatingParser with tool_choice='required' streaming."""
+
+    @staticmethod
+    def _make_parser():
+        """Create a DelegatingParser with a fake tokenizer."""
+        from vllm.parser.abstract_parser import DelegatingParser
+
+        class FakeTokenizer:
+            def get_vocab(self):
+                return {}
+
+        return DelegatingParser(FakeTokenizer())
+
+    @staticmethod
+    def _make_request(tool_choice="required"):
+        return ResponsesRequest(
+            model="test-model",
+            input="Call a tool",
+            tools=[
+                {
+                    "type": "function",
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {"type": "string"},
+                        },
+                        "required": ["location"],
+                    },
+                }
+            ],
+            tool_choice=tool_choice,
+        )
+
+    def test_required_single_tool_call_streaming(self):
+        """Incremental parsing of a single tool call JSON array."""
+        parser = self._make_parser()
+        request = self._make_request()
+
+        # Simulate token-by-token streaming of:
+        # [{"name": "get_weather", "parameters": {"location": "Berlin"}}]
+        deltas = [
+            '[{"name": "get_weather", "parameters": {"location":',  # name+params ready
+            ' "Berlin"}}]',  # arguments completion
+        ]
+
+        messages = []
+        for delta in deltas:
+            msg = parser.parse_delta(delta, [], request)
+            messages.append(msg)
+
+        # First delta should yield the tool call once name/parameters are present
+        assert messages[0] is not None
+        assert messages[0].tool_calls is not None
+        assert len(messages[0].tool_calls) == 1
+        assert messages[0].tool_calls[0].function.name == "get_weather"
+        # arguments may be partial
+        assert "location" in messages[0].tool_calls[0].function.arguments
+
+        # Second delta should only append arguments
+        assert messages[1] is not None
+        assert messages[1].tool_calls is not None
+        assert messages[1].tool_calls[0].function.name is None
+        assert "Berlin" in messages[1].tool_calls[0].function.arguments
+
+    def test_required_multiple_tool_calls_streaming(self):
+        """Incremental parsing of two tool calls in a JSON array."""
+        parser = self._make_parser()
+        request = self._make_request()
+
+        # Two tool calls
+        deltas = [
+            '[{"name": "get_weather", "parameters": {"location": "Vienna"}},',
+            ' {"name": "get_weather", "parameters": {"location": "Berlin"}}]',
+        ]
+
+        messages = []
+        for delta in deltas:
+            msg = parser.parse_delta(delta, [], request)
+            messages.append(msg)
+
+        # First delta: first tool call ready
+        assert messages[0] is not None
+        assert messages[0].tool_calls[0].function.name == "get_weather"
+        assert messages[0].tool_calls[0].index == 0
+
+        # Second delta: second tool call ready
+        assert messages[1] is not None
+        assert messages[1].tool_calls[0].function.name == "get_weather"
+        assert messages[1].tool_calls[0].index == 1
+
+    def test_required_no_tool_parser(self):
+        """Required tool choice should work even when no _tool_parser is set."""
+        parser = self._make_parser()
+        request = self._make_request()
+
+        # No _tool_parser set on parser
+        assert parser.tool_parser is None
+
+        deltas = ['[{"name": "get_weather", "parameters": {"location": "Berlin"}}]']
+        msg = parser.parse_delta(deltas[0], [], request)
+
+        assert msg is not None
+        assert msg.tool_calls is not None
+        assert msg.tool_calls[0].function.name == "get_weather"
+
+    def test_required_with_reasoning_parser(self):
+        """Required tool choice after reasoning ends."""
+        from vllm.parser.abstract_parser import StreamState
+
+        parser = self._make_parser()
+        request = self._make_request()
+
+        # Manually set state as if reasoning has ended
+        parser._stream_state = StreamState(
+            reasoning_ended=True,
+            tool_call_text_started=False,
+        )
+
+        deltas = ['[{"name": "get_weather", "parameters": {"location": "Berlin"}}]']
+        msg = parser.parse_delta(deltas[0], [], request)
+
+        assert msg is not None
+        assert msg.tool_calls is not None
+        assert msg.tool_calls[0].function.name == "get_weather"

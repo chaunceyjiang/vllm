@@ -335,6 +335,11 @@ class Attention(nn.Module, AttentionLayerBase):
             cache_config.enable_prefix_caching = False
 
         impl_cls = self.attn_backend.get_impl_cls()
+        impl_extra_args = dict(extra_impl_args)
+        # Pass layer_name to TOKEN_SPARSE backend so it can extract layer_idx
+        # to determine which layers should use sparse attention.
+        if self.attn_backend.get_name() == "TOKEN_SPARSE":
+            impl_extra_args["layer_name"] = self.layer_name
         self.impl = impl_cls(
             num_heads,
             head_size,
@@ -346,7 +351,7 @@ class Attention(nn.Module, AttentionLayerBase):
             logits_soft_cap,
             attn_type,
             kv_sharing_target_layer_name,
-            **extra_impl_args,
+            **impl_extra_args,
         )
         self.backend = AttentionBackendEnum[self.attn_backend.get_name()]
         self.dtype = dtype

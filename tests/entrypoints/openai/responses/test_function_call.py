@@ -6,7 +6,7 @@ import json
 import openai  # use the official client for correctness check
 import pytest
 
-MODEL_NAME = "Qwen/Qwen3-1.7B"
+MODEL_NAME = "/mnt/data4/models/Qwen/Qwen3-8B"
 tools = [
     {
         "type": "function",
@@ -321,12 +321,100 @@ async def test_function_calling_with_streaming_expected_arguments(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", [MODEL_NAME])
+@pytest.mark.parametrize(
+    "tool_choice",
+    ["required","auto"],
+)
 async def test_function_calling_with_streaming_types(
-    client: openai.AsyncOpenAI, model_name: str
+    client: openai.AsyncOpenAI, model_name: str, tool_choice: str
 ):
     # this links the "done" type with the "start" type
     # so every "done" type should have a corresponding "start" type
     # and every open block should be closed by the end of the stream
+    #
+    # stream of events for a response with function call could look like this:
+    # option1: reasoning -> content(option) -> function_call
+    # response.created
+    # -> response.in_progress
+    # -> response.output_item.added
+    # -> response.reasoning_part.added
+    # -> response.reasoning_text.delta
+    # ....
+    # -> response.reasoning_text.delta
+    # -> response.reasoning_text.done
+    # -> response.reasoning_part.done
+    # -> response.output_item.done
+    # -> response.output_item.added
+    # -> response.content_part.added
+    # -> response.output_text.delta
+    # ...
+    # -> response.output_text.delta
+    # -> response.output_text.done
+    # -> response.content_part.done
+    # -> response.output_item.done
+    # -> response.output_item.added
+    # -> response.function_call_arguments.delta
+    # ...
+    # -> response.function_call_arguments.delta
+    # -> response.function_call_arguments.done
+    # -> response.output_item.done
+    # -> response.completed
+    #
+    #
+    # option2: reasoning -> content
+    # response.created
+    # -> response.in_progress
+    # -> response.output_item.added
+    # -> response.reasoning_part.added
+    # -> response.reasoning_text.delta
+    # ....
+    # -> response.reasoning_text.delta
+    # -> response.reasoning_text.done
+    # -> response.reasoning_part.done
+    # -> response.output_item.done
+    # -> response.output_item.added
+    # -> response.content_part.added
+    # -> response.output_text.delta
+    # ..
+    # -> response.output_text.delta
+    # -> response.output_text.done
+    # -> response.content_part.done
+    # -> response.output_item.done
+    # -> response.completed
+    #
+    # option3: content
+    #
+    # response.created
+    # -> response.in_progress
+    # -> response.output_item.added
+    # -> response.content_part.added
+    # -> response.output_text.delta
+    # ...
+    # -> response.output_text.delta
+    # -> response.output_text.done
+    # -> response.content_part.done
+    # -> response.output_item.done
+    # -> response.completed
+    #
+    # option4: content -> function_call
+    # response.created
+    # -> response.in_progress
+    # -> response.output_item.added
+    # -> response.content_part.added
+    # -> response.output_text.delta
+    # ...
+    # -> response.output_text.delta
+    # -> response.output_text.done
+    # -> response.content_part.done
+    # -> response.output_item.done
+    # -> response.output_item.added
+    # -> response.function_call_arguments.delta
+    # ...
+    # -> response.function_call_arguments.delta
+    # -> response.function_call_arguments.done
+    # -> response.output_item.done
+    # -> response.completed
+
     pairs_of_event_types = {
         "response.completed": "response.created",
         "response.output_item.done": "response.output_item.added",
@@ -347,6 +435,7 @@ async def test_function_calling_with_streaming_types(
         model=model_name,
         input=input_list,
         tools=tools,
+        tool_choice=tool_choice,
         stream=True,
     )
 

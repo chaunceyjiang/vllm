@@ -29,8 +29,8 @@ from openai import OpenAI
 # Modify OpenAI's API key and API base to use vLLM's API server.
 openai_api_key = "EMPTY"
 openai_api_base = "http://localhost:8000/v1"
-
-messages = [{"role": "user", "content": "9.11 and 9.8, which is greater?"}]
+content = "2.11 and 9.8, which is greater?" * 1000000
+messages = [{"role": "user", "content": content[:196600]}]
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
     print("client: Start streaming chat completions...")
     printed_reasoning = False
     printed_content = False
-
+    all_content = ''
     for chunk in stream:
         # Safely extract reasoning and content from delta,
         # defaulting to None if attributes don't exist or are empty strings
@@ -67,6 +67,7 @@ def main():
                 print("\ncontent:", end="", flush=True)
             # Extract and print the content
             print(content, end="", flush=True)
+            all_content += content
 
 
 if __name__ == "__main__":
