@@ -147,10 +147,31 @@ def _is_libs_cu13_install_intact() -> bool:
     return True
 
 
+@functools.cache
+def _is_flash_qla_available() -> bool:
+    """Return True if FlashQLA is installed and the current GPU is SM90+."""
+    try:
+        import flash_qla  # noqa: F401
+    except ImportError:
+        return False
+
+    if not torch.cuda.is_available():
+        return False
+
+    capability = torch.cuda.get_device_capability()
+    return capability[0] >= 9  # SM90+
+
+
 def _resolve_gdn_prefill_backend(
     vllm_config: VllmConfig,
-) -> tuple[str, Literal["triton", "flashinfer", "cutedsl"]]:
+) -> tuple[str, Literal["triton", "flashinfer", "cutedsl", "flashqla"]]:
     """Resolve GDN prefill backend.
+
+    FlashQLA's GDN prefill kernel is chosen when:
+    * ``requested in ["flashqla", "auto"]``;
+    * ``platform == cuda``;
+    * SM90+ (Hopper) GPU;
+    * FlashQLA package is installed.
 
     FlashInfer's GDN prefill kernel is chosen when:
     * ``requested in ["flashinfer", "auto"]``;
@@ -180,32 +201,37 @@ def _resolve_gdn_prefill_backend(
         vllm_config.model_config.hf_config, "linear_key_head_dim", None
     )
 
+    supports_flashqla = False
     supports_flashinfer = False
     supports_cutedsl = False
 
-    if current_platform.is_device_capability(90):
-        supports_flashinfer = True
-    elif (
-        current_platform.is_device_capability_family(100)
-        and head_k_dim == 128
-        and current_platform.get_cuda_runtime_major() >= 13
-    ):
-        supports_flashinfer = _is_libs_cu13_install_intact()
-        supports_cutedsl = True
-        if not supports_flashinfer:
-            logger.warning_once(
-                "FlashInfer Blackwell GDN requires an intact nvidia-cutlass-dsl"
-                "-libs-cu13 install, but some on-disk files do not match the "
-                "SHA-256 declared in its RECORD (install-order race in "
-                "nvidia-cutlass-dsl packaging -- see "
-                "https://github.com/NVIDIA/cutlass/issues/3170 and "
-                "https://github.com/NVIDIA/cutlass/issues/3259). Falling back "
-                "to Triton/FLA. Repair with: pip install --force-reinstall "
-                "--no-deps nvidia-cutlass-dsl-libs-cu13"
-            )
+    if current_platform.is_cuda():
+        if current_platform.is_device_capability(90):
+            supports_flashqla = _is_flash_qla_available()
+            supports_flashinfer = True
+        elif (
+            current_platform.is_device_capability_family(100)
+            and head_k_dim == 128
+            and current_platform.get_cuda_runtime_major() >= 13
+        ):
+            supports_flashinfer = _is_libs_cu13_install_intact()
+            supports_cutedsl = True
+            if not supports_flashinfer:
+                logger.warning_once(
+                    "FlashInfer Blackwell GDN requires an intact nvidia-cutlass-dsl"
+                    "-libs-cu13 install, but some on-disk files do not match the "
+                    "SHA-256 declared in its RECORD (install-order race in "
+                    "nvidia-cutlass-dsl packaging -- see "
+                    "https://github.com/NVIDIA/cutlass/issues/3170 and "
+                    "https://github.com/NVIDIA/cutlass/issues/3259). Falling back "
+                    "to Triton/FLA. Repair with: pip install --force-reinstall "
+                    "--no-deps nvidia-cutlass-dsl-libs-cu13"
+                )
 
     if backend in ["flashinfer", "auto"] and supports_flashinfer:
         return backend, "flashinfer"
+    if backend in ["flashqla", "auto"] and supports_flashqla:
+        return backend, "flashqla"
     if backend == "cutedsl" and supports_cutedsl:
         return backend, "cutedsl"
     return backend, "triton"
@@ -221,6 +247,7 @@ def _log_gdn_backend_decision(
         vllm_config.model_config.hf_config, "linear_key_head_dim", None
     )
     chosen = {
+        "flashqla": "FlashQLA",
         "flashinfer": "FlashInfer",
         "cutedsl": "CuteDSL",
         "triton": "Triton/FLA",
@@ -295,7 +322,10 @@ class ChunkGatedDeltaRule(CustomOp):
         backend, active_backend = _resolve_gdn_prefill_backend(vllm_config)
         self.gdn_prefill_backend = active_backend
 
-        if backend in ("flashinfer", "cutedsl") and active_backend != backend:
+        if (
+            backend in ("flashqla", "flashinfer", "cutedsl")
+            and active_backend != backend
+        ):
             logger.warning_once(
                 "GDN prefill backend '%s' is selected but cannot use this "
                 "kernel on the current platform. Falling back to Triton/FLA.",
@@ -303,7 +333,9 @@ class ChunkGatedDeltaRule(CustomOp):
             )
         _log_gdn_backend_decision(vllm_config, backend, active_backend)
 
-        if active_backend == "flashinfer":
+        if active_backend == "flashqla":
+            self._forward_method = self.forward_flashqla
+        elif active_backend == "flashinfer":
             self._forward_method = self.forward_cuda
         elif active_backend == "cutedsl":
             self._forward_method = self.forward_cutedsl
@@ -413,6 +445,39 @@ class ChunkGatedDeltaRule(CustomOp):
         )
         if not output_final_state:
             final_state = None
+        return o, final_state
+
+    def forward_flashqla(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        beta: torch.Tensor,
+        initial_state: torch.Tensor,
+        output_final_state: bool,
+        cu_seqlens: torch.Tensor | None = None,
+        chunk_indices: torch.Tensor | None = None,
+        chunk_offsets: torch.Tensor | None = None,
+        use_qk_l2norm_in_kernel: bool = True,
+        core_attn_out: torch.Tensor | None = None,
+    ):
+        from flash_qla import chunk_gated_delta_rule as flashqla_chunk_gated_delta_rule
+
+        o, final_state = flashqla_chunk_gated_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            initial_state=initial_state,
+            output_final_state=output_final_state,
+            cu_seqlens=cu_seqlens,
+        )
+        if core_attn_out is not None:
+            o_flat = o.reshape(-1)
+            co_flat = core_attn_out.reshape(-1)
+            co_flat[: o_flat.numel()].copy_(o_flat)
         return o, final_state
 
 
