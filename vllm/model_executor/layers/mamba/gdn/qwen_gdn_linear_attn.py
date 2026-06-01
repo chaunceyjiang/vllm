@@ -205,28 +205,27 @@ def _resolve_gdn_prefill_backend(
     supports_flashinfer = False
     supports_cutedsl = False
 
-    if current_platform.is_cuda():
-        if current_platform.is_device_capability(90):
-            supports_flashqla = _is_flash_qla_available()
-            supports_flashinfer = True
-        elif (
-            current_platform.is_device_capability_family(100)
-            and head_k_dim == 128
-            and current_platform.get_cuda_runtime_major() >= 13
-        ):
-            supports_flashinfer = _is_libs_cu13_install_intact()
-            supports_cutedsl = True
-            if not supports_flashinfer:
-                logger.warning_once(
-                    "FlashInfer Blackwell GDN requires an intact nvidia-cutlass-dsl"
-                    "-libs-cu13 install, but some on-disk files do not match the "
-                    "SHA-256 declared in its RECORD (install-order race in "
-                    "nvidia-cutlass-dsl packaging -- see "
-                    "https://github.com/NVIDIA/cutlass/issues/3170 and "
-                    "https://github.com/NVIDIA/cutlass/issues/3259). Falling back "
-                    "to Triton/FLA. Repair with: pip install --force-reinstall "
-                    "--no-deps nvidia-cutlass-dsl-libs-cu13"
-                )
+    if current_platform.is_device_capability(90):
+        supports_flashqla = _is_flash_qla_available()
+        supports_flashinfer = True
+    elif (
+        current_platform.is_device_capability_family(100)
+        and head_k_dim == 128
+        and current_platform.get_cuda_runtime_major() >= 13
+    ):
+        supports_flashinfer = _is_libs_cu13_install_intact()
+        supports_cutedsl = True
+        if not supports_flashinfer:
+            logger.warning_once(
+                "FlashInfer Blackwell GDN requires an intact nvidia-cutlass-dsl"
+                "-libs-cu13 install, but some on-disk files do not match the "
+                "SHA-256 declared in its RECORD (install-order race in "
+                "nvidia-cutlass-dsl packaging -- see "
+                "https://github.com/NVIDIA/cutlass/issues/3170 and "
+                "https://github.com/NVIDIA/cutlass/issues/3259). Falling back "
+                "to Triton/FLA. Repair with: pip install --force-reinstall "
+                "--no-deps nvidia-cutlass-dsl-libs-cu13"
+            )
 
     if backend in ["flashinfer", "auto"] and supports_flashinfer:
         return backend, "flashinfer"
