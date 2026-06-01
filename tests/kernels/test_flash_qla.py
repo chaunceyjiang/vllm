@@ -36,8 +36,8 @@ def test_resolve_gdn_prefill_backend_flashqla_explicit():
     assert active == "flashqla"
 
 
-def test_resolve_gdn_prefill_backend_auto_prefers_flashqla():
-    """Auto should prefer flashqla when available on SM90."""
+def test_resolve_gdn_prefill_backend_auto_prefers_flashinfer():
+    """Auto should prefer flashinfer when available on SM90."""
     if not _is_flash_qla_available():
         pytest.skip("FlashQLA not available")
 
@@ -47,7 +47,7 @@ def test_resolve_gdn_prefill_backend_auto_prefers_flashqla():
 
     requested, active = _resolve_gdn_prefill_backend(vllm_config)
     assert requested == "auto"
-    assert active == "flashqla"
+    assert active == "flashinfer"
 
 
 def test_resolve_gdn_prefill_backend_fallback_to_flashinfer():
