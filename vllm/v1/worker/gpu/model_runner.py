@@ -80,6 +80,7 @@ from vllm.v1.worker.gpu.input_batch import (
     post_update,
     post_update_num_computed_tokens,
     prepare_pos_seq_lens,
+    prepare_prefill_inputs,
     prepare_prefill_pos_seq_lens,
 )
 from vllm.v1.worker.gpu.kv_connector import (
@@ -916,7 +917,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         is_prefilling_np = num_computed_prefill_tokens_np < prefill_len_np
 
         # Prepare prefill tokens, positions, and seq_lens.
-        if np.any(is_prefilling_np):
+        if np.all(is_prefilling_np):
             prepare_prefill_pos_seq_lens(
                 self.input_buffers.input_ids,
                 self.req_states.next_prefill_tokens,
@@ -929,6 +930,16 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.input_buffers.seq_lens,
             )
         else:
+            if np.any(is_prefilling_np):
+                prepare_prefill_inputs(
+                    self.input_buffers.input_ids,
+                    self.req_states.next_prefill_tokens,
+                    idx_mapping,
+                    query_start_loc,
+                    self.req_states.all_token_ids.gpu,
+                    self.req_states.prefill_len.gpu,
+                    self.req_states.num_computed_tokens.gpu,
+                )
             prepare_pos_seq_lens(
                 idx_mapping,
                 query_start_loc,
