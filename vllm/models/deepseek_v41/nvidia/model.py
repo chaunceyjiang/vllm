@@ -380,6 +380,7 @@ class DeepseekV4DecoderLayer(nn.Module):
         run_gemm_rs: bool = False,
         mhc_stream: torch.cuda.Stream | None = None,
         fuse_mhc_all_reduce: bool = False,
+        attention_cls: type[nn.Module] | None = None,
     ):
         super().__init__()
 
@@ -415,7 +416,8 @@ class DeepseekV4DecoderLayer(nn.Module):
                 )
 
         self.rms_norm_eps = config.rms_norm_eps
-        self.attn = _select_dsv4_attn_cls(vllm_config)(
+        attention_cls = attention_cls or _select_dsv4_attn_cls(vllm_config)
+        self.attn = attention_cls(
             vllm_config,
             prefix=f"{prefix}.attn",
             topk_indices_buffer=topk_indices_buffer,

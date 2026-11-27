@@ -194,11 +194,13 @@ class DeepseekV41DFlySpeculatorConfig(DFlySpeculatorConfig):
 
     @classmethod
     def apply_options(cls, spec):
-        if (
-            not current_platform.is_cuda()
-            or not current_platform.is_device_capability_family(90)
+        if not current_platform.is_cuda() or not (
+            current_platform.is_device_capability_family(90)
+            or current_platform.is_device_capability_family(100)
         ):
-            raise NotImplementedError("DeepSeek-V4.1 DFly2 requires NVIDIA SM90")
+            raise NotImplementedError(
+                "DeepSeek-V4.1 DFly2 requires NVIDIA Hopper or Blackwell DC"
+            )
         if spec.kv_cache_dtype not in (None, "auto", "fp8_ds_mla"):
             raise ValueError("DFly2 requires the target's fp8_ds_mla KV layout")
         if spec.attention_backend is not None:

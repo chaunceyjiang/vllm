@@ -181,6 +181,10 @@ class DFlyQueryModel(nn.Module):
 
 
 class DeepseekV41DFlySpeculator(HYV4DFlySpeculator):
+    # Decode recomputes the final prompt row after target KV transfer, so its
+    # hidden state and sparse index snapshots are local to this runner.
+    supports_nixl_pd = True
+
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         super().__init__(vllm_config, device)
         config = self._draft_vllm_config

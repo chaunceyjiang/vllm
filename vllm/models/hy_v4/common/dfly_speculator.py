@@ -107,6 +107,7 @@ class HYV4DFlySpeculator(DraftModelSpeculator):
     can_reuse_target_attn_metadata = False
     draft_model_cls: ClassVar[type["HYV4DFlyForCausalLM"]]
     attention_cls: ClassVar[type["HYV4MLAAttention"]]
+    supports_nixl_pd: ClassVar[bool] = False
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         cache_dtype = vllm_config.cache_config.cache_dtype
@@ -126,6 +127,9 @@ class HYV4DFlySpeculator(DraftModelSpeculator):
         if (
             kv_transfer is not None
             and kv_transfer.kv_connector != "DecodeBenchConnector"
+            and not (
+                self.supports_nixl_pd and kv_transfer.kv_connector == "NixlConnector"
+            )
         ):
             raise ValueError("DFly does not support PD disaggregation")
         if (

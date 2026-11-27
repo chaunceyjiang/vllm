@@ -16,8 +16,11 @@ from vllm.utils.torch_utils import set_default_torch_dtype
 
 pytestmark = pytest.mark.skipif(
     not current_platform.is_cuda()
-    or not current_platform.is_device_capability_family(90),
-    reason="DeepSeek-V4.1 DFly2 on Hopper",
+    or not (
+        current_platform.is_device_capability_family(90)
+        or current_platform.is_device_capability_family(100)
+    ),
+    reason="DeepSeek-V4.1 DFly2 on Hopper or Blackwell DC",
 )
 
 
@@ -276,9 +279,9 @@ def test_attentive_correction_matches_causal_block_reference(
             ctx = torch.zeros_like(q)
             keys = context.kv[0, [0, 2, 7, 15]].float()
             scores = q[0].float() @ keys.T / 512**0.5
-            probs = torch.softmax(torch.cat((scores, attn.attn_sink[:, None]), -1), -1)[
-                :, :-1
-            ]
+            probs = torch.softmax(
+                torch.cat((scores, attn.attn_sink[:heads, None]), -1), -1
+            )[:, :-1]
             ctx[0] = (probs @ keys).bfloat16()
             keys = torch.stack(expected_keys, dim=1).float()
             scores = torch.einsum("bhd,bkd->bhk", q.float(), keys) / 512**0.5

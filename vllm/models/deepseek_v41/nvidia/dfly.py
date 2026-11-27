@@ -35,6 +35,7 @@ from vllm.models.deepseek_v4.common.grouped_wo_a import DeepseekV4GroupedWoA
 from vllm.models.deepseek_v41.common.rope import build_deepseek_v4_rope
 from vllm.models.deepseek_v41.dfly_config import DeepseekV41DFlySpeculatorConfig
 from vllm.models.deepseek_v41.quant_config import DeepseekV4FP8Config
+from vllm.platforms import current_platform
 from vllm.utils.math_utils import next_power_of_2, round_up
 from vllm.v1.attention.ops.flashmla import flash_mla_sparse_fwd
 
@@ -82,7 +83,8 @@ class DFlyContext(nn.Module):
     ) -> torch.Tensor:
         width = self.query_width if block else 1
         batch, heads, dim = q.shape[0] // width, q.shape[1], q.shape[2]
-        padded_heads = max(8, next_power_of_2(heads))
+        min_heads = 8 if current_platform.is_device_capability_family(90) else 64
+        padded_heads = max(min_heads, next_power_of_2(heads))
         if heads != padded_heads:
             q = torch.nn.functional.pad(q, (0, 0, 0, padded_heads - heads))
         keys = self.indices[:batch]
@@ -145,7 +147,8 @@ class DFlyMLA(nn.Module):
             return_bias=False,
             prefix=f"{prefix}.wq_b",
         )
-        padded_heads = max(8, next_power_of_2(self.local_heads))
+        min_heads = 8 if current_platform.is_device_capability_family(90) else 64
+        padded_heads = max(min_heads, next_power_of_2(self.local_heads))
         self.attn_sink = make_attention_sink(padded_heads, torch.float32)
         self.wo_a = DeepseekV4GroupedWoA(
             hf.num_attention_heads * hf.head_dim // hf.o_groups,
@@ -205,24 +208,11 @@ class DFlyAttention(DFlyMLA):
 
 class DFlyDecoderLayer(DeepseekV4DecoderLayer):
     def __init__(self, vllm_config: VllmConfig, prefix: str):
-        hf = vllm_config.model_config.hf_config
         super().__init__(
             vllm_config,
             prefix,
-            topk_indices_buffer=torch.empty(
-                vllm_config.scheduler_config.max_num_batched_tokens,
-                hf.index_topk,
-                dtype=torch.int32,
-            ),
+            attention_cls=DFlyAttention,
         )
-        attn_prefix = f"{prefix}.attn"
-        # The replacement reads target KV and owns no paged cache. Remove the
-        # parent attention's registrations before the runner discovers caches.
-        context = vllm_config.compilation_config.static_forward_context
-        for name in tuple(context):
-            if name == attn_prefix or name.startswith(f"{attn_prefix}."):
-                del context[name]
-        self.attn = DFlyAttention(vllm_config, attn_prefix)
 
 
 class DFlyAttentiveCorrection(DFlyMLA):
